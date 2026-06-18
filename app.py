@@ -16,10 +16,11 @@ POPPLER_PATH = os.getenv('POPPLER_PATH') or None
 
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
-if shutil.which('tesseract') is not None:
-    app.logger.info('Using Tesseract: %s', shutil.which('tesseract'))
-elif os.path.isfile(TESSERACT_CMD):
-    app.logger.info('Using Tesseract: %s', TESSERACT_CMD)
+for candidate in (TESSERACT_CMD, shutil.which('tesseract'), '/usr/bin/tesseract', '/nix/var/nix/profiles/default/bin/tesseract'):
+    if candidate and os.path.isfile(candidate):
+        pytesseract.pytesseract.tesseract_cmd = candidate
+        app.logger.info('Using Tesseract: %s', candidate)
+        break
 else:
     app.logger.warning('Tesseract not found on PATH; set TESSERACT_CMD if needed')
 
@@ -37,8 +38,13 @@ def error_response(message, status=400):
     return jsonify({'error': message}), status
 
 
+def tesseract_available():
+    cmd = pytesseract.pytesseract.tesseract_cmd
+    return os.path.isfile(cmd) or shutil.which('tesseract') is not None
+
+
 def run_ocr_on_bytes(file_bytes, filename):
-    if shutil.which('tesseract') is None and not os.path.isfile(TESSERACT_CMD):
+    if not tesseract_available():
         raise Exception('Tesseract not installed on server environment')
 
     lower_name = (filename or '').lower()
@@ -49,14 +55,20 @@ def run_ocr_on_bytes(file_bytes, filename):
         except ImportError as exc:
             raise RuntimeError('PDF support requires pdf2image') from exc
 
-        if shutil.which('pdftoppm') is None and not POPPLER_PATH:
-            raise RuntimeError(
-                'Poppler is not installed. Install Poppler or set POPPLER_PATH.'
-            )
+        poppler_path = POPPLER_PATH
+        if shutil.which('pdftoppm') is None and not poppler_path:
+            for poppler_bin in ('/usr/bin', '/nix/var/nix/profiles/default/bin'):
+                if os.path.isfile(os.path.join(poppler_bin, 'pdftoppm')):
+                    poppler_path = poppler_bin
+                    break
+            else:
+                raise RuntimeError(
+                    'Poppler is not installed. Install Poppler or set POPPLER_PATH.'
+                )
 
         convert_kwargs = {'first_page': 1, 'last_page': 1}
-        if POPPLER_PATH:
-            convert_kwargs['poppler_path'] = POPPLER_PATH
+        if poppler_path:
+            convert_kwargs['poppler_path'] = poppler_path
 
         pages = convert_from_bytes(file_bytes, **convert_kwargs)
         if not pages:

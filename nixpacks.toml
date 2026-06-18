@@ -1,5 +1,9 @@
 [phases.setup]
 nixPkgs = ["tesseract", "poppler"]
+aptPkgs = ["tesseract-ocr", "poppler-utils"]
 
 [phases.build]
 cmds = ["tesseract --version"]
+
+[variables]
+TESSERACT_CMD = "/usr/bin/tesseract"
