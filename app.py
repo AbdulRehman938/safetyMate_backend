@@ -11,17 +11,17 @@ from PIL import Image
 app = Flask(__name__)
 CORS(app, origins='*')
 
-TESSERACT_CANDIDATES = [
-    os.environ.get('TESSERACT_CMD', ''),
-    r'C:\Program Files\Tesseract-OCR\tesseract.exe',
-    r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
-]
+TESSERACT_CMD = os.getenv('TESSERACT_CMD', 'tesseract')
+POPPLER_PATH = os.getenv('POPPLER_PATH') or None
 
-POPPLER_CANDIDATES = [
-    os.environ.get('POPPLER_PATH', ''),
-    r'C:\Program Files\poppler\Library\bin',
-    r'C:\Program Files\poppler-24.08.0\Library\bin',
-]
+pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+
+if shutil.which('tesseract') is not None:
+    app.logger.info('Using Tesseract: %s', shutil.which('tesseract'))
+elif os.path.isfile(TESSERACT_CMD):
+    app.logger.info('Using Tesseract: %s', TESSERACT_CMD)
+else:
+    app.logger.warning('Tesseract not found on PATH; set TESSERACT_CMD if needed')
 
 COURSE_KEYWORDS = [
     {'name': 'Working at Heights', 'keywords': ['heights', 'fall protection', 'height']},
@@ -33,55 +33,13 @@ COURSE_KEYWORDS = [
 ]
 
 
-def resolve_tesseract_cmd():
-    for candidate in TESSERACT_CANDIDATES:
-        if candidate and os.path.isfile(candidate):
-            return candidate
-    found = shutil.which('tesseract')
-    return found
-
-
-def resolve_poppler_path():
-    for candidate in POPPLER_CANDIDATES:
-        if candidate and os.path.isdir(candidate):
-            return candidate
-
-    winget_root = os.path.join(
-        os.environ.get('LOCALAPPDATA', ''),
-        'Microsoft',
-        'WinGet',
-        'Packages',
-    )
-    if os.path.isdir(winget_root):
-        for root, _dirs, files in os.walk(winget_root):
-            if 'pdftoppm.exe' in files:
-                return root
-
-    found = shutil.which('pdftoppm')
-    if found:
-        return os.path.dirname(found)
-    return None
-
-
-TESSERACT_CMD = resolve_tesseract_cmd()
-POPPLER_PATH = resolve_poppler_path()
-
-if TESSERACT_CMD:
-    pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
-    app.logger.info('Using Tesseract: %s', TESSERACT_CMD)
-else:
-    app.logger.warning('Tesseract executable not found')
-
-
 def error_response(message, status=400):
     return jsonify({'error': message}), status
 
 
 def run_ocr_on_bytes(file_bytes, filename):
-    if not TESSERACT_CMD:
-        raise RuntimeError(
-            'Tesseract is not installed. Install Tesseract-OCR or set TESSERACT_CMD.'
-        )
+    if shutil.which('tesseract') is None and not os.path.isfile(TESSERACT_CMD):
+        raise Exception('Tesseract not installed on server environment')
 
     lower_name = (filename or '').lower()
 
@@ -91,17 +49,16 @@ def run_ocr_on_bytes(file_bytes, filename):
         except ImportError as exc:
             raise RuntimeError('PDF support requires pdf2image') from exc
 
-        if not POPPLER_PATH:
+        if shutil.which('pdftoppm') is None and not POPPLER_PATH:
             raise RuntimeError(
                 'Poppler is not installed. Install Poppler or set POPPLER_PATH.'
             )
 
-        pages = convert_from_bytes(
-            file_bytes,
-            first_page=1,
-            last_page=1,
-            poppler_path=POPPLER_PATH,
-        )
+        convert_kwargs = {'first_page': 1, 'last_page': 1}
+        if POPPLER_PATH:
+            convert_kwargs['poppler_path'] = POPPLER_PATH
+
+        pages = convert_from_bytes(file_bytes, **convert_kwargs)
         if not pages:
             raise RuntimeError('Could not read PDF pages')
         return pytesseract.image_to_string(pages[0])

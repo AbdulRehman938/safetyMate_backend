@@ -1,2 +1,5 @@
 [phases.setup]
 nixPkgs = ["tesseract", "poppler"]
+
+[phases.build]
+cmds = ["tesseract --version"]
